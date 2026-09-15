@@ -1,0 +1,1550 @@
+<script type="text/javascript">
+(function() {
+
+    RED.nodes.registerType('mrsmart-cube-ihost-config', {
+        category: 'config',
+
+        defaults: {
+            name: {
+                value: 'Main iHost'
+            },
+
+            host: {
+                value: 'http://ihost.local',
+                required: true
+            }
+        },
+
+        credentials: {
+            token: {
+                type: 'password'
+            }
+        },
+
+        label: function() {
+            return this.name ||
+                this.host ||
+                'iHost';
+        },
+
+        oneditprepare: function() {
+
+            $('#mrsmart-cube-get-token')
+                .on('click', function() {
+
+                    const host =
+                        $('#node-config-input-host')
+                            .val()
+                            .trim();
+
+                    if (!host) {
+                        RED.notify(
+                            'Enter the iHost IP/host first',
+                            'warning'
+                        );
+                        return;
+                    }
+
+                    RED.notify(
+                        'Requesting token. If iHost asks for approval, approve it and press Get Token again.',
+                        'info'
+                    );
+
+                    $.getJSON(
+                        'mrsmart-cube-ihost/token',
+                        {
+                            host: host,
+                            app_name:
+                                'Mr Smart Aqara Cube Controller'
+                        }
+                    )
+                    .done(function(r) {
+
+                        if (
+                            r &&
+                            r.error === 0 &&
+                            r.data &&
+                            r.data.token
+                        ) {
+                            $('#node-config-input-token')
+                                .val(r.data.token);
+
+                            RED.notify(
+                                'Token received and filled in. Click Add/Update, then Deploy.',
+                                'success'
+                            );
+                        } else {
+                            RED.notify(
+                                (r && r.message) ||
+                                'Approve the request on iHost, then press Get Token again.',
+                                'warning'
+                            );
+                        }
+                    })
+                    .fail(function(xhr) {
+
+                        RED.notify(
+                            (
+                                xhr.responseJSON &&
+                                xhr.responseJSON.message
+                            ) ||
+                            'Token request failed',
+                            'error'
+                        );
+                    });
+                });
+        }
+    });
+
+
+    function labelFor(d) {
+
+        const base =
+            d.name ||
+            d.model ||
+            d.serial_number;
+
+        return base +
+            (
+                d.model &&
+                d.model !== base
+                    ? ' — ' + d.model
+                    : ''
+            );
+    }
+
+
+    function setSingleOptions(
+        $select,
+        items,
+        selected,
+        placeholder
+    ) {
+
+        $select.empty();
+
+        if (placeholder) {
+            $select.append(
+                $('<option></option>')
+                    .attr('value', '')
+                    .text(placeholder)
+            );
+        }
+
+        items.forEach(function(d) {
+
+            $select.append(
+                $('<option></option>')
+                    .attr(
+                        'value',
+                        d.serial_number
+                    )
+                    .text(
+                        labelFor(d)
+                    )
+            );
+        });
+
+        if (selected) {
+            $select.val(selected);
+        }
+    }
+
+
+    function normaliseSelectedTargets(value) {
+
+        if (Array.isArray(value)) {
+            return value.filter(Boolean);
+        }
+
+        if (!value) {
+            return [];
+        }
+
+        if (
+            typeof value ===
+            'string'
+        ) {
+
+            const trimmed =
+                value.trim();
+
+            if (!trimmed) {
+                return [];
+            }
+
+            try {
+                const parsed =
+                    JSON.parse(trimmed);
+
+                if (
+                    Array.isArray(parsed)
+                ) {
+                    return parsed.filter(Boolean);
+                }
+            } catch (e) {}
+
+            return trimmed
+                .split(',')
+                .map(function(v) {
+                    return v.trim();
+                })
+                .filter(Boolean);
+        }
+
+        return [];
+    }
+
+
+    function buildTargetPicker(
+        items,
+        selectedValues
+    ) {
+
+        const $picker =
+            $('#node-input-targetSerialsPicker');
+
+        const options =
+            items.map(function(d) {
+
+                return {
+                    value:
+                        d.serial_number,
+
+                    label:
+                        labelFor(d)
+                };
+            });
+
+        try {
+            $picker.typedInput(
+                'destroy'
+            );
+        } catch (e) {}
+
+        $picker.typedInput({
+            type: 'targets',
+
+            types: [{
+                value: 'targets',
+                label: 'Target Lights',
+                icon:
+                    'fa fa-lightbulb-o',
+
+                multiple: true,
+
+                options:
+                    options
+            }]
+        });
+
+        $picker.typedInput(
+            'value',
+            selectedValues.join(',')
+        );
+
+        $picker.typedInput(
+            'width',
+            '100%'
+        );
+    }
+
+
+    RED.nodes.registerType(
+        'mrsmart-ihost-aqara-cube',
+        {
+            category:
+                'Mr Smart',
+
+            color:
+                '#2F80ED',
+
+            defaults: {
+
+                name: {
+                    value: ''
+                },
+
+                server: {
+                    value: '',
+                    type:
+                        'mrsmart-cube-ihost-config',
+                    required: true
+                },
+
+                cubeSerial: {
+                    value: '',
+                    required: true
+                },
+
+                targetSerials: {
+                    value: [],
+                    required: true
+                },
+
+                targetSerial: {
+                    value: ''
+                },
+
+                groupMode: {
+                    value:
+                        'synchronized',
+                    required: true
+                },
+
+                brightnessStep: {
+                    value: 3,
+                    required: true,
+                    validate:
+                        RED.validators.number()
+                },
+
+                cctStep: {
+                    value: 15,
+                    required: true,
+                    validate:
+                        RED.validators.number()
+                },
+
+                cctModifierGesture: {
+                    value: 'shake',
+                    required: true
+                },
+
+                cctModeTimeout: {
+                    value: 5,
+                    required: true,
+                    validate:
+                        RED.validators.number()
+                },
+
+                shakeAction: {
+                    value: 'none'
+                },
+
+                throwAction: {
+                    value: 'none'
+                },
+
+                wakeupAction: {
+                    value: 'none'
+                },
+
+                fallAction: {
+                    value: 'none'
+                },
+
+                tapAction: {
+                    value: 'toggle'
+                },
+
+                slideAction: {
+                    value: 'none'
+                },
+
+                flip90Action: {
+                    value: 'none'
+                },
+
+                flip180Action: {
+                    value: 'none'
+                }
+            },
+
+            inputs: 0,
+            outputs: 1,
+
+            icon:
+                'font-awesome/fa-cube',
+
+            label: function() {
+                return this.name ||
+                    'Mr Smart Aqara Cube';
+            },
+
+            paletteLabel:
+                'Aqara Cube → Lights',
+
+
+            oneditprepare: function() {
+
+                const node =
+                    this;
+
+                let selectedTargets =
+                    normaliseSelectedTargets(
+                        node.targetSerials
+                    );
+
+                if (
+                    !selectedTargets.length &&
+                    node.targetSerial
+                ) {
+                    selectedTargets = [
+                        node.targetSerial
+                    ];
+                }
+
+                let currentLights = [];
+
+
+                function updateTargetSummary() {
+
+                    const selectedSet =
+                        new Set(
+                            selectedTargets
+                        );
+
+                    const selectedDevices =
+                        currentLights.filter(
+                            function(d) {
+                                return selectedSet.has(
+                                    d.serial_number
+                                );
+                            }
+                        );
+
+                    const cctCount =
+                        selectedDevices.filter(
+                            function(d) {
+
+                                const caps =
+                                    (
+                                        d.capabilities ||
+                                        []
+                                    ).map(
+                                        function(c) {
+                                            return c.capability;
+                                        }
+                                    );
+
+                                return (
+                                    caps.includes(
+                                        'color-temperature'
+                                    ) ||
+                                    !!(
+                                        d.state &&
+                                        d.state[
+                                            'color-temperature'
+                                        ]
+                                    )
+                                );
+                            }
+                        ).length;
+
+                    const otherCount =
+                        Math.max(
+                            0,
+                            selectedDevices.length -
+                            cctCount
+                        );
+
+                    $('#mrsmart-cube-target-count')
+                        .text(
+                            selectedTargets.length +
+                            ' selected'
+                        );
+
+                    if (
+                        !selectedTargets.length
+                    ) {
+                        $('#mrsmart-cube-target-summary')
+                            .text(
+                                'Choose one or more target lights.'
+                            );
+                    } else {
+                        $('#mrsmart-cube-target-summary')
+                            .text(
+                                'Auto detect: ' +
+                                cctCount +
+                                ' CCT • ' +
+                                otherCount +
+                                ' dimmer/other'
+                            );
+                    }
+                }
+
+
+                function readPickerSelection() {
+
+                    let value = '';
+
+                    try {
+                        value =
+                            $('#node-input-targetSerialsPicker')
+                                .typedInput(
+                                    'value'
+                                ) ||
+                            '';
+                    } catch (e) {}
+
+                    selectedTargets =
+                        String(value)
+                            .split(',')
+                            .map(function(v) {
+                                return v.trim();
+                            })
+                            .filter(Boolean);
+
+                    $('#node-input-targetSerials')
+                        .val(
+                            JSON.stringify(
+                                selectedTargets
+                            )
+                        );
+
+                    updateTargetSummary();
+                }
+
+
+                function refresh() {
+
+                    const server =
+                        $('#node-input-server')
+                            .val();
+
+                    if (!server) {
+
+                        RED.notify(
+                            'Select an iHost first',
+                            'warning'
+                        );
+
+                        return;
+                    }
+
+                    $('#mrsmart-cube-device-status')
+                        .text(
+                            'Loading devices...'
+                        );
+
+                    $.getJSON(
+                        'mrsmart-cube-ihost/devices/' +
+                        encodeURIComponent(
+                            server
+                        )
+                    )
+                    .done(function(r) {
+
+                        const list =
+                            (
+                                r.data &&
+                                r.data.device_list
+                            ) ||
+                            [];
+
+                        /*
+                         * Cube detection:
+                         * require press capability and favour
+                         * known Aqara/LUMI Cube identifiers.
+                         */
+                        let cubes =
+                            list.filter(
+                                function(d) {
+
+                                    const caps =
+                                        (
+                                            d.capabilities ||
+                                            []
+                                        ).map(
+                                            function(c) {
+                                                return c.capability;
+                                            }
+                                        );
+
+                                    const text =
+                                        (
+                                            (
+                                                d.model ||
+                                                ''
+                                            ) +
+                                            ' ' +
+                                            (
+                                                d.name ||
+                                                ''
+                                            ) +
+                                            ' ' +
+                                            (
+                                                d.manufacturer ||
+                                                ''
+                                            )
+                                        ).toLowerCase();
+
+                                    return (
+                                        caps.includes(
+                                            'press'
+                                        ) &&
+                                        (
+                                            /cube|lumi\.sensor_cube|aqara/.test(
+                                                text
+                                            )
+                                        )
+                                    );
+                                }
+                            );
+
+                        /*
+                         * Fallback:
+                         * if iHost uses an unusual Cube name,
+                         * show press-capable devices rather than
+                         * hiding the Cube completely.
+                         */
+                        if (!cubes.length) {
+
+                            cubes =
+                                list.filter(
+                                    function(d) {
+
+                                        const caps =
+                                            (
+                                                d.capabilities ||
+                                                []
+                                            ).map(
+                                                function(c) {
+                                                    return c.capability;
+                                                }
+                                            );
+
+                                        return caps.includes(
+                                            'press'
+                                        );
+                                    }
+                                );
+                        }
+
+
+                        const lights =
+                            list.filter(
+                                function(d) {
+
+                                    const caps =
+                                        (
+                                            d.capabilities ||
+                                            []
+                                        ).map(
+                                            function(c) {
+                                                return c.capability;
+                                            }
+                                        );
+
+                                    return (
+                                        d.display_category ===
+                                            'light' ||
+                                        caps.includes(
+                                            'brightness'
+                                        ) ||
+                                        caps.includes(
+                                            'color-temperature'
+                                        )
+                                    );
+                                }
+                            );
+
+
+                        currentLights =
+                            lights;
+
+
+                        setSingleOptions(
+                            $('#node-input-cubeSerial'),
+                            cubes,
+                            node.cubeSerial,
+                            'Select Aqara Cube...'
+                        );
+
+
+                        buildTargetPicker(
+                            lights,
+                            selectedTargets
+                        );
+
+
+                        $('#node-input-targetSerialsPicker')
+                            .off(
+                                'change.mrsmartcube'
+                            )
+                            .on(
+                                'change.mrsmartcube',
+                                readPickerSelection
+                            );
+
+
+                        $('#mrsmart-cube-device-status')
+                            .text(
+                                cubes.length +
+                                ' Cube(s), ' +
+                                lights.length +
+                                ' light(s) found'
+                            );
+
+
+                        updateTargetSummary();
+                    })
+                    .fail(function(xhr) {
+
+                        $('#mrsmart-cube-device-status')
+                            .text(
+                                'Could not load devices'
+                            );
+
+                        RED.notify(
+                            (
+                                xhr.responseJSON &&
+                                xhr.responseJSON.message
+                            ) ||
+                            'Deploy the iHost config first, then Refresh Devices',
+                            'error'
+                        );
+                    });
+                }
+
+
+                $('#mrsmart-cube-refresh-devices')
+                    .on(
+                        'click',
+                        refresh
+                    );
+
+
+                $('#mrsmart-cube-select-all-targets')
+                    .on(
+                        'click',
+                        function() {
+
+                            selectedTargets =
+                                currentLights.map(
+                                    function(d) {
+                                        return d.serial_number;
+                                    }
+                                );
+
+                            buildTargetPicker(
+                                currentLights,
+                                selectedTargets
+                            );
+
+                            $('#node-input-targetSerialsPicker')
+                                .off(
+                                    'change.mrsmartcube'
+                                )
+                                .on(
+                                    'change.mrsmartcube',
+                                    readPickerSelection
+                                );
+
+                            $('#node-input-targetSerials')
+                                .val(
+                                    JSON.stringify(
+                                        selectedTargets
+                                    )
+                                );
+
+                            updateTargetSummary();
+                        }
+                    );
+
+
+                $('#mrsmart-cube-clear-targets')
+                    .on(
+                        'click',
+                        function() {
+
+                            selectedTargets =
+                                [];
+
+                            buildTargetPicker(
+                                currentLights,
+                                selectedTargets
+                            );
+
+                            $('#node-input-targetSerialsPicker')
+                                .off(
+                                    'change.mrsmartcube'
+                                )
+                                .on(
+                                    'change.mrsmartcube',
+                                    readPickerSelection
+                                );
+
+                            $('#node-input-targetSerials')
+                                .val('[]');
+
+                            updateTargetSummary();
+                        }
+                    );
+
+
+                buildTargetPicker(
+                    [],
+                    selectedTargets
+                );
+
+                $('#node-input-targetSerials')
+                    .val(
+                        JSON.stringify(
+                            selectedTargets
+                        )
+                    );
+
+                updateTargetSummary();
+
+
+                if (
+                    $('#node-input-server')
+                        .val()
+                ) {
+                    setTimeout(
+                        refresh,
+                        250
+                    );
+                }
+            },
+
+
+            oneditsave: function() {
+
+                let value = '';
+
+                try {
+                    value =
+                        $('#node-input-targetSerialsPicker')
+                            .typedInput(
+                                'value'
+                            ) ||
+                        '';
+                } catch (e) {}
+
+                const selected =
+                    String(value)
+                        .split(',')
+                        .map(function(v) {
+                            return v.trim();
+                        })
+                        .filter(Boolean);
+
+                this.targetSerials =
+                    selected;
+
+                this.targetSerial =
+                    selected.length
+                        ? selected[0]
+                        : '';
+
+                $('#node-input-targetSerials')
+                    .val(
+                        JSON.stringify(
+                            selected
+                        )
+                    );
+            }
+        }
+    );
+
+})();
+</script>
+
+
+<script
+    type="text/html"
+    data-template-name="mrsmart-cube-ihost-config">
+
+    <div class="form-row">
+        <label for="node-config-input-name">
+            <i class="fa fa-tag"></i>
+            Name
+        </label>
+
+        <input
+            type="text"
+            id="node-config-input-name"
+            placeholder="Main iHost">
+    </div>
+
+
+    <div class="form-row">
+        <label for="node-config-input-host">
+            <i class="fa fa-link"></i>
+            iHost
+        </label>
+
+        <input
+            type="text"
+            id="node-config-input-host"
+            placeholder="http://192.168.1.50:80">
+    </div>
+
+
+    <div class="form-row">
+        <label for="node-config-input-token">
+            <i class="fa fa-key"></i>
+            Token
+        </label>
+
+        <input
+            type="password"
+            id="node-config-input-token">
+    </div>
+
+
+    <div class="form-row">
+        <label></label>
+
+        <button
+            type="button"
+            class="red-ui-button"
+            id="mrsmart-cube-get-token">
+
+            <i class="fa fa-key"></i>
+            Get Token
+        </button>
+    </div>
+
+
+    <div class="form-tips">
+        <b>First-time pairing:</b>
+        enter the iHost IP,
+        press <b>Get Token</b>,
+        approve the request on iHost,
+        then press <b>Get Token</b>
+        once more.
+        The token is stored as a
+        Node-RED credential.
+    </div>
+
+</script>
+
+
+<script
+    type="text/html"
+    data-help-name="mrsmart-cube-ihost-config">
+
+    <p>
+        Connection to an eWeLink CUBE /
+        SONOFF iHost using the local
+        Open API v2.
+    </p>
+
+</script>
+
+
+<script
+    type="text/html"
+    data-template-name="mrsmart-ihost-aqara-cube">
+
+    <div class="form-row">
+
+        <label for="node-input-name">
+            <i class="fa fa-tag"></i>
+            Name
+        </label>
+
+        <input
+            type="text"
+            id="node-input-name"
+            placeholder="Living Room Aqara Cube">
+
+    </div>
+
+
+    <div class="form-row">
+
+        <label for="node-input-server">
+            <i class="fa fa-server"></i>
+            iHost
+        </label>
+
+        <input
+            type="text"
+            id="node-input-server">
+
+    </div>
+
+
+    <div class="form-row">
+
+        <label></label>
+
+        <button
+            type="button"
+            class="red-ui-button"
+            id="mrsmart-cube-refresh-devices">
+
+            <i class="fa fa-refresh"></i>
+            Refresh Devices
+
+        </button>
+
+        <span
+            id="mrsmart-cube-device-status"
+            style="margin-left:10px;color:#666">
+        </span>
+
+    </div>
+
+
+    <div class="form-row">
+
+        <label for="node-input-cubeSerial">
+            <i class="fa fa-cube"></i>
+            Aqara Cube
+        </label>
+
+        <select
+            id="node-input-cubeSerial"
+            style="width:70%">
+
+            <option value="">
+                Select Aqara Cube...
+            </option>
+
+        </select>
+
+    </div>
+
+
+    <div class="form-row">
+
+        <label for="node-input-targetSerialsPicker">
+            <i class="fa fa-lightbulb-o"></i>
+            Target Lights
+        </label>
+
+
+        <div
+            style="
+                display:inline-block;
+                width:70%;
+                vertical-align:top
+            ">
+
+            <input
+                type="text"
+                id="node-input-targetSerialsPicker">
+
+
+            <div
+                style="
+                    margin-top:6px;
+                    display:flex;
+                    align-items:center;
+                    gap:8px;
+                    flex-wrap:wrap
+                ">
+
+                <button
+                    type="button"
+                    class="
+                        red-ui-button
+                        red-ui-button-small
+                    "
+                    id="mrsmart-cube-select-all-targets">
+
+                    Select All
+
+                </button>
+
+
+                <button
+                    type="button"
+                    class="
+                        red-ui-button
+                        red-ui-button-small
+                    "
+                    id="mrsmart-cube-clear-targets">
+
+                    Clear
+
+                </button>
+
+
+                <span
+                    id="mrsmart-cube-target-count"
+                    style="
+                        color:#555;
+                        font-weight:600
+                    ">
+
+                    0 selected
+
+                </span>
+
+            </div>
+
+
+            <div
+                id="mrsmart-cube-target-summary"
+                style="
+                    margin-top:5px;
+                    color:#777;
+                    font-size:12px
+                ">
+            </div>
+
+        </div>
+
+    </div>
+
+
+    <input
+        type="hidden"
+        id="node-input-targetSerials">
+
+    <input
+        type="hidden"
+        id="node-input-targetSerial">
+
+
+    <hr>
+
+
+    <div class="form-row">
+
+        <label for="node-input-groupMode">
+            <i class="fa fa-object-group"></i>
+            Group Mode
+        </label>
+
+        <select
+            id="node-input-groupMode"
+            style="width:220px">
+
+            <option value="synchronized">
+                Synchronized
+            </option>
+
+            <option value="relative">
+                Relative
+            </option>
+
+        </select>
+
+    </div>
+
+
+    <div class="form-row">
+
+        <label for="node-input-brightnessStep">
+            <i class="fa fa-sun-o"></i>
+            Brightness Step
+        </label>
+
+        <input
+            type="number"
+            id="node-input-brightnessStep"
+            min="1"
+            max="10"
+            style="width:90px">
+
+        %
+
+    </div>
+
+
+    <div class="form-row">
+
+        <label for="node-input-cctStep">
+            <i class="fa fa-adjust"></i>
+            CCT Step
+        </label>
+
+        <input
+            type="number"
+            id="node-input-cctStep"
+            min="1"
+            max="30"
+            style="width:90px">
+
+        %
+
+    </div>
+
+
+    <hr>
+
+
+    <div class="form-row">
+
+        <label for="node-input-cctModifierGesture">
+            <i class="fa fa-exchange"></i>
+            CCT Modifier
+        </label>
+
+        <select
+            id="node-input-cctModifierGesture"
+            style="width:220px">
+
+            <option value="shake">
+                Shake
+            </option>
+
+            <option value="slide">
+                Slide
+            </option>
+
+            <option value="tap">
+                Tap
+            </option>
+
+            <option value="flip90">
+                Flip 90°
+            </option>
+
+            <option value="flip180">
+                Flip 180°
+            </option>
+
+            <option value="throw">
+                Throw
+            </option>
+
+            <option value="fall">
+                Fall
+            </option>
+
+            <option value="wakeup">
+                Wake Up
+            </option>
+
+            <option value="disabled">
+                Disabled
+            </option>
+
+        </select>
+
+    </div>
+
+
+    <div class="form-row">
+
+        <label for="node-input-cctModeTimeout">
+            <i class="fa fa-clock-o"></i>
+            CCT Timeout
+        </label>
+
+        <input
+            type="number"
+            id="node-input-cctModeTimeout"
+            min="1"
+            max="60"
+            style="width:90px">
+
+        seconds
+
+    </div>
+
+
+    <div class="form-tips">
+
+        <b>Normal rotation:</b>
+        Rotate Right = Brightness Up;
+        Rotate Left = Brightness Down.
+        <br>
+
+        <b>Temporary CCT Mode:</b>
+        perform the selected CCT Modifier gesture.
+        During CCT Mode,
+        Rotate Right = Cooler and
+        Rotate Left = Warmer.
+        <br>
+
+        <b>Timeout:</b>
+        every rotation while CCT Mode is active
+        restarts the full inactivity timer.
+        The controller returns to Brightness Mode
+        only after the configured period with no
+        CCT rotation.
+
+    </div>
+
+
+    <hr>
+
+
+    <div class="form-row">
+
+        <label for="node-input-tapAction">
+            Tap
+        </label>
+
+        <select
+            id="node-input-tapAction"
+            class="mrsmart-cube-action">
+
+            <option value="none">
+                No Action
+            </option>
+
+            <option value="toggle">
+                Toggle
+            </option>
+
+            <option value="on">
+                On
+            </option>
+
+            <option value="off">
+                Off
+            </option>
+
+            <option value="brightness_up">
+                Brightness Up
+            </option>
+
+            <option value="brightness_down">
+                Brightness Down
+            </option>
+
+            <option value="cct_cooler">
+                CCT Cooler
+            </option>
+
+            <option value="cct_warmer">
+                CCT Warmer
+            </option>
+
+        </select>
+
+    </div>
+
+
+    <div class="form-row">
+
+        <label for="node-input-shakeAction">
+            Shake
+        </label>
+
+        <select
+            id="node-input-shakeAction"
+            class="mrsmart-cube-action">
+
+            <option value="none">No Action</option>
+            <option value="toggle">Toggle</option>
+            <option value="on">On</option>
+            <option value="off">Off</option>
+            <option value="brightness_up">Brightness Up</option>
+            <option value="brightness_down">Brightness Down</option>
+            <option value="cct_cooler">CCT Cooler</option>
+            <option value="cct_warmer">CCT Warmer</option>
+
+        </select>
+
+    </div>
+
+
+    <div class="form-row">
+
+        <label for="node-input-slideAction">
+            Slide
+        </label>
+
+        <select
+            id="node-input-slideAction"
+            class="mrsmart-cube-action">
+
+            <option value="none">No Action</option>
+            <option value="toggle">Toggle</option>
+            <option value="on">On</option>
+            <option value="off">Off</option>
+            <option value="brightness_up">Brightness Up</option>
+            <option value="brightness_down">Brightness Down</option>
+            <option value="cct_cooler">CCT Cooler</option>
+            <option value="cct_warmer">CCT Warmer</option>
+
+        </select>
+
+    </div>
+
+
+    <div class="form-row">
+
+        <label for="node-input-flip90Action">
+            Flip 90°
+        </label>
+
+        <select
+            id="node-input-flip90Action"
+            class="mrsmart-cube-action">
+
+            <option value="none">No Action</option>
+            <option value="toggle">Toggle</option>
+            <option value="on">On</option>
+            <option value="off">Off</option>
+            <option value="brightness_up">Brightness Up</option>
+            <option value="brightness_down">Brightness Down</option>
+            <option value="cct_cooler">CCT Cooler</option>
+            <option value="cct_warmer">CCT Warmer</option>
+
+        </select>
+
+    </div>
+
+
+    <div class="form-row">
+
+        <label for="node-input-flip180Action">
+            Flip 180°
+        </label>
+
+        <select
+            id="node-input-flip180Action"
+            class="mrsmart-cube-action">
+
+            <option value="none">No Action</option>
+            <option value="toggle">Toggle</option>
+            <option value="on">On</option>
+            <option value="off">Off</option>
+            <option value="brightness_up">Brightness Up</option>
+            <option value="brightness_down">Brightness Down</option>
+            <option value="cct_cooler">CCT Cooler</option>
+            <option value="cct_warmer">CCT Warmer</option>
+
+        </select>
+
+    </div>
+
+
+    <div class="form-row">
+
+        <label for="node-input-throwAction">
+            Throw
+        </label>
+
+        <select
+            id="node-input-throwAction"
+            class="mrsmart-cube-action">
+
+            <option value="none">No Action</option>
+            <option value="toggle">Toggle</option>
+            <option value="on">On</option>
+            <option value="off">Off</option>
+            <option value="brightness_up">Brightness Up</option>
+            <option value="brightness_down">Brightness Down</option>
+            <option value="cct_cooler">CCT Cooler</option>
+            <option value="cct_warmer">CCT Warmer</option>
+
+        </select>
+
+    </div>
+
+
+    <div class="form-row">
+
+        <label for="node-input-fallAction">
+            Fall
+        </label>
+
+        <select
+            id="node-input-fallAction"
+            class="mrsmart-cube-action">
+
+            <option value="none">No Action</option>
+            <option value="toggle">Toggle</option>
+            <option value="on">On</option>
+            <option value="off">Off</option>
+            <option value="brightness_up">Brightness Up</option>
+            <option value="brightness_down">Brightness Down</option>
+            <option value="cct_cooler">CCT Cooler</option>
+            <option value="cct_warmer">CCT Warmer</option>
+
+        </select>
+
+    </div>
+
+
+    <div class="form-row">
+
+        <label for="node-input-wakeupAction">
+            Wake Up
+        </label>
+
+        <select
+            id="node-input-wakeupAction"
+            class="mrsmart-cube-action">
+
+            <option value="none">No Action</option>
+            <option value="toggle">Toggle</option>
+            <option value="on">On</option>
+            <option value="off">Off</option>
+            <option value="brightness_up">Brightness Up</option>
+            <option value="brightness_down">Brightness Down</option>
+            <option value="cct_cooler">CCT Cooler</option>
+            <option value="cct_warmer">CCT Warmer</option>
+
+        </select>
+
+    </div>
+
+
+    <div class="form-tips">
+
+        <b>Gesture mapping:</b>
+        choose an action for each gesture.
+        If a gesture is selected as the
+        <b>CCT Modifier</b>,
+        the modifier takes priority and its normal
+        mapped action is not executed.
+
+        <br><br>
+
+        CCT actions are applied only to compatible
+        CCT targets detected by iHost or previously
+        learned by the controller.
+
+    </div>
+
+</script>
+
+
+<script
+    type="text/html"
+    data-help-name="mrsmart-ihost-aqara-cube">
+
+    <p>
+        Controls one or more iHost lighting targets
+        from a compatible Aqara Magic Cube using the
+        local eWeLink CUBE Open API v2.
+    </p>
+
+    <p>
+        <b>Normal rotation:</b>
+        Rotate Right increases brightness and
+        Rotate Left decreases brightness.
+    </p>
+
+    <p>
+        <b>Temporary CCT Mode:</b>
+        the installer chooses a Cube gesture such as
+        Shake, Slide or Flip 90° to temporarily change
+        rotation from brightness control to colour
+        temperature control.
+    </p>
+
+    <p>
+        Every rotation during CCT Mode resets the
+        inactivity timer. The node returns to normal
+        brightness control only after the configured
+        timeout expires without another CCT rotation.
+    </p>
+
+    <p>
+        <b>Synchronized mode:</b>
+        selected lights use a common group
+        power/brightness/CCT value.
+    </p>
+
+    <p>
+        <b>Relative mode:</b>
+        each selected light changes relative to its
+        own current state.
+    </p>
+
+    <p>
+        The current SONOFF iHost CUBE mapping exposes
+        Cube gestures but does not expose Cube face
+        identifiers through the state events available
+        to this node. The node architecture can be
+        extended if future CUBE versions expose
+        side/from-side/to-side or rotation-angle data.
+    </p>
+
+</script>

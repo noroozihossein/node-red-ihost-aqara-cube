@@ -1,0 +1,25 @@
+{
+  "name": "node-red-contrib-mrsmart-ihost-aqara-cube",
+  "version": "0.1.0",
+  "description": "Aqara Magic Cube controller for SONOFF iHost/eWeLink CUBE with multi-target lighting, brightness and temporary CCT control.",
+  "keywords": [
+    "node-red",
+    "ihost",
+    "ewelink",
+    "cube",
+    "aqara",
+    "zigbee",
+    "smart-home",
+    "lighting",
+    "cct",
+    "mrsmart"
+  ],
+  "license": "MIT",
+  "author": "Mr Smart",
+  "main": "mrsmart-ihost-aqara-cube.js",
+  "node-red": {
+    "nodes": {
+      "mrsmart-ihost-aqara-cube": "mrsmart-ihost-aqara-cube.js"
+    }
+  }
+}
